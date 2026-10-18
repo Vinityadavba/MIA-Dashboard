@@ -84,6 +84,9 @@ nav{max-width:1440px;margin:0 auto;padding:16px 24px 0;display:flex;gap:2px}
 .dates{display:inline-flex;gap:6px;align-items:center}
 .fb-sep{width:1px;height:20px;background:var(--line)}
 .btn-sm{padding:4px 10px;font-size:11.5px}
+.band-tg{display:flex;gap:6px;margin:2px 0 8px}.band-tg .btn.on{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.band-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}.band-h{margin:6px 0 6px;font-size:13px}
+@media(max-width:900px){.band-grid{grid-template-columns:minmax(0,1fr)}}
 .chip.period{background:var(--s1);color:#fff;border-color:var(--s1)}
 .chip.period button{color:#fff}
 .period-note{font-size:11.5px;color:var(--ink-3);margin-top:9px;padding-top:9px;border-top:1px dashed var(--line)}
@@ -699,11 +702,18 @@ const basisNote=()=>HASBK()
   ?'Stock is valued at <b>retail before tax</b>. From 30 Sep 2026 it is the actual <b>Final Price − Pre Tax Value</b> of each piece in the store\'s Live Stock report; on earlier days each piece carries its own last known real price, moved by the store\'s daily gold rate for its metal share. The POS book value (metal content) is kept alongside for reference.'
   :'Stock is valued at <b>retail before tax</b> — the <b>Final Price − Pre Tax Value</b> of each piece in the Live Stock report.';
 /* price bands: sales side follows the period, stock side is the latest snapshot */
+let BANDMODE='val';  /* price-band views: 'val' = rupee value, 'qty' = pieces */
+function bandToggle(box){
+  const d=document.createElement('div'); d.className='band-tg';
+  d.innerHTML=[['val','Value (₹)'],['qty','Pieces']].map(([k,l])=>`<button class="btn btn-sm${BANDMODE===k?' on':''}" data-k="${k}" aria-pressed="${BANDMODE===k}">${l}</button>`).join('');
+  d.querySelectorAll('button').forEach(b=>b.onclick=()=>{BANDMODE=b.dataset.k;renderAll();});
+  box.appendChild(d);
+}
 function periodBands(){
   /* sold pieces from SALE lines only - a credit note is not a piece sold in any band */
   const S=saleRows(PS.sales), c={}, nv={}; S.forEach(r=>{c[r.b]=(c[r.b]||0)+Math.abs(+r.q||1);nv[r.b]=(nv[r.b]||0)+r.n;});
-  const K={}; SLc().forEach(r=>{K[r.b]=(K[r.b]||0)+QQ(r);});
-  return D.bands.filter(b=>b.b!=='Returns').map(b=>({b:b.b,sales_items:c[b.b]||0,sales_net:nv[b.b]||0,stock_skus:K[b.b]||0}));
+  const K={}, KV={}; SLc().forEach(r=>{K[r.b]=(K[r.b]||0)+QQ(r);KV[r.b]=(KV[r.b]||0)+(+r.v||0);});
+  return D.bands.filter(b=>b.b!=='Returns').map(b=>({b:b.b,sales_items:c[b.b]||0,sales_net:nv[b.b]||0,stock_skus:K[b.b]||0,stock_val:KV[b.b]||0}));
 }
 /* Articles: the same design in three sizes carries three Item Codes. Grouping by
    the 7-character design code counts it once, which is what "top seller" should mean. */
@@ -1037,14 +1047,43 @@ function renderSalesStock(){
       +`The oldest piece on ${D.meta.store_name}'s shelf is <b>${num(oldest)} days</b> old, so by definition nothing can qualify.</p>`
       +`<p>This chart becomes meaningful once the opening stock crosses 180 days &mdash; around ${(()=>{const d=new Date(D.stock_latest_date);d.setDate(d.getDate()+(181-oldest));return d.toLocaleDateString('en-GB',{month:'long',year:'numeric'});})()}.</p></div>`);
   }
+  const V=BANDMODE==='val';
   const cH=card(g3,'Price band: what sells vs what is stocked',
-    'Share of pieces sold against share of pieces held, by price band. A band with far more stock than sales is over-assorted at that price point.');
-  cH.insertAdjacentHTML('beforeend',`<p class="period-note">The sales side follows the date filter and counts pieces on sale bills (returns excluded); the stock side is the latest shelf (${dlab(D.stock_latest_date)} ${D.stock_latest_date.slice(0,4)}) — price bands need piece-level stock, which exists only for the latest snapshot.${F.cat?' Both sides: '+F.cat+' only.':''}</p>`);
+    V?'Share of sales value against share of stock value, by price band. A band holding far more stock value than it sells is over-assorted at that price point.'
+     :'Share of pieces sold against share of pieces held, by price band. A band with far more stock than sales is over-assorted at that price point.');
+  bandToggle(cH);
+  cH.insertAdjacentHTML('beforeend',`<p class="period-note">The sales side follows the date filter and counts ${V?'net value of sale bills':'pieces on sale bills'} (returns excluded); the stock side is the latest shelf (${dlab(D.stock_latest_date)} ${D.stock_latest_date.slice(0,4)})${V?' at retail value before tax':''} — price bands need piece-level stock, which exists only for the latest snapshot.${F.cat?' Both sides: '+F.cat+' only.':''}</p>`);
   const bd=periodBands();
-  const totS=bd.reduce((a,b)=>a+b.sales_items,0)||1, totK=bd.reduce((a,b)=>a+b.stock_skus,0)||1;
-  grouped(cH,bd.map(b=>({k:b.b,'Share of pieces sold':100*b.sales_items/totS,'Share of pieces in stock':100*b.stock_skus/totK})),
-    ['Share of pieces sold','Share of pieces in stock'],[C(0),'var(--s4)'],
+  const sKey=V?'sales_net':'sales_items', kKey=V?'stock_val':'stock_skus';
+  const L1=V?'Share of sales value':'Share of pieces sold', L2=V?'Share of stock value':'Share of pieces in stock';
+  const totS=bd.reduce((a,b)=>a+b[sKey],0)||1, totK=bd.reduce((a,b)=>a+b[kKey],0)||1;
+  grouped(cH,bd.map(b=>({k:b.b,[L1]:100*b[sKey]/totS,[L2]:100*b[kKey]/totK})),
+    [L1,L2],[C(0),'var(--s4)'],
     {fmt:v=>v.toFixed(1)+'%',rh:34,labw:74,valw:56,onclick:r=>openDrill('band',r.k)});
+
+  /* category x price band grid: what the manager reads across in one go */
+  const gB=gridOf(root,'g1');
+  const cBG=card(gB,'Category × price band: sales and stock',
+    (V?'Net sales value (date filter) and stock value at retail (latest shelf)':'Pieces sold (date filter) and pieces in stock (latest shelf)')+' for every category in every price band. Click a band on the chart above for the full working.');
+  bandToggle(cBG);
+  {
+    const BB=D.bands.filter(b=>b.b!=='Returns').map(b=>b.b);
+    const SR=saleRows(PS.sales), KR=SLc();
+    const sv=r=>V?r.n:Math.abs(+r.q||1), kv=r=>V?(+r.v||0):QQ(r);
+    const S={},K={}; SR.forEach(r=>{(S[r.c]=S[r.c]||{})[r.b]=(S[r.c][r.b]||0)+sv(r);});
+    KR.forEach(r=>{(K[r.c]=K[r.c]||{})[r.b]=(K[r.c][r.b]||0)+kv(r);});
+    const tot=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
+    const cats=[...new Set([...Object.keys(S),...Object.keys(K)])].sort((a,b)=>tot(S[b])-tot(S[a])||tot(K[b])-tot(K[a]));
+    const f=v=>v?(V?R(v):num(v)):'<span class="muted">—</span>';
+    const mk=(M,lab)=>{
+      const col=BB.map(b=>cats.reduce((a,c)=>a+((M[c]||{})[b]||0),0)), all=col.reduce((a,b)=>a+b,0)||1;
+      return `<div><h4 class="band-h">${lab}</h4>`+tbl(['Category',...BB.map(b=>b.replace('<','&lt;')),'Total','Share'],
+        [...cats.map(c=>[c,...BB.map(b=>f((M[c]||{})[b]||0)),'<b>'+f(tot(M[c]))+'</b>',pct(100*tot(M[c])/all)]),
+         ['<b>Total</b>',...col.map(v=>'<b>'+f(v)+'</b>'),'<b>'+f(all)+'</b>','100%'],
+         ['<i>Share</i>',...col.map(v=>'<i>'+pct(100*v/all)+'</i>'),'','']],{h:9999})+'</div>';
+    };
+    cBG.insertAdjacentHTML('beforeend','<div class="band-grid">'+mk(S,V?'Sales — net value':'Sales — pieces sold')+mk(K,V?`Stock — retail value, ${dlab(D.stock_latest_date)}`:`Stock — pieces, ${dlab(D.stock_latest_date)}`)+'</div>');
+  }
 
   const g4=gridOf(root,'g21');
   const cI=card(g4,'Net sales by category and month',
